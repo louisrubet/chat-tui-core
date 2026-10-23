@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- "Name ..." shown beside the title when the end of the discussion is out of view (opened on the first new message, or reading further up): it was hidden at the bottom.
+
 ## v1.11.1
 
 - Published on crates.io as `chat-tui-core` (the name chat-tui was taken there); the library is still `chat_tui`. The GitHub repository is renamed chat-tui-core too.

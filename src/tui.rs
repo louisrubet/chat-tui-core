@@ -2653,14 +2653,14 @@ fn draw_discussion(
     let mut sel_max = sel_max.unwrap_or(0);
 
     // "Name ..." under the last message while someone types, kept in view with it.
-    if !typing.is_empty() {
+    let typing_text = (!typing.is_empty()).then(|| format!("{} ...", typing.join(", ")));
+    let mut typing_line = None;
+    if let Some(text) = &typing_text {
         if !lines.is_empty() {
             lines.push(ui::RenderLine::new(None, ui::LineKind::Left(String::new())));
         }
-        lines.push(ui::RenderLine::new(
-            None,
-            ui::LineKind::Left(format!("{} ...", typing.join(", "))),
-        ));
+        lines.push(ui::RenderLine::new(None, ui::LineKind::Left(text.clone())));
+        typing_line = Some(lines.len() - 1);
         if selected_msg + 1 >= discussion.messages.len() {
             sel_max = lines.len() - 1;
         }
@@ -2677,8 +2677,16 @@ fn draw_discussion(
         *scroll = max_scroll;
     }
 
+    // Reading further up (from the first new message, or a message selected): "Name ..." is
+    // out of view, so it goes beside the title.
+    let title = match (&typing_text, typing_line) {
+        (Some(text), Some(line)) if line < *scroll || line >= *scroll + viewport => {
+            format!("{}   {text}", discussion.title)
+        }
+        _ => discussion.title.clone(),
+    };
     queue!(out, Clear(ClearType::All), cursor::Hide)?;
-    print_row(out, 0, &ui::pad_left(&discussion.title, width), false)?;
+    print_row(out, 0, &ui::pad_left(&title, width), false)?;
     print_row(out, 1, &" ".repeat(width), false)?;
 
     let mut visible_messages = std::collections::BTreeSet::new();
@@ -3211,7 +3219,11 @@ mod tests {
         assert!(screen(&mut app).contains("Family Group ..."));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
-        assert!(screen(&mut app).contains("Dad ..."));
+        assert_eq!(
+            screen(&mut app).matches("Dad ...").count(),
+            1,
+            "under the last message only"
+        );
 
         let message = Message {
             from_me: false,
@@ -3231,6 +3243,29 @@ mod tests {
         app.set_typing(1, "mom", "Mom", true, now);
         app.expire_typing(now + TYPING_TIMEOUT);
         assert!(!screen(&mut app).contains("Mom ..."), "expired");
+    }
+
+    #[test]
+    fn typing_out_of_view_is_shown_beside_the_title() {
+        let mut app = app();
+        for i in 0..60 {
+            let news = Message {
+                from_me: false,
+                author: Some("mom".to_string()),
+                ..Message::mine(100 + i, format!("news {i}"), None, false)
+            };
+            app.push_message(1, news);
+        }
+        // Opened on the first new message: the end of the discussion is out of view.
+        app.open(1);
+        app.set_typing(1, "dad", "Dad", true, Instant::now());
+        let text = screen(&mut app);
+        assert!(
+            !text.contains("news 59"),
+            "reading from the first new message"
+        );
+        assert!(text.contains("Family Group   Dad ..."));
+        assert_eq!(text.matches("Dad ...").count(), 1);
     }
 
     #[test]
