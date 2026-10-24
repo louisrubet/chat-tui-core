@@ -492,16 +492,16 @@ pub fn mock_discussions() -> Vec<Discussion> {
             hidden: false,
             folder: None,
             messages: vec![
-                msg(false, "Bob Dupont", "Did you push the fix?", "2026-07-17 10:00"),
-                msg(true, "", "Yep, just pushed it.", "2026-07-17 10:01"),
-                msg(false, "Bob Dupont", "Nice, testing now.", "2026-07-17 10:02"),
+                msg(false, "Bob Dupont", "Did you push the fix?", "2026-07-14 10:00"),
+                msg(true, "", "Yep, just pushed it.", "2026-07-14 10:01"),
+                msg(false, "Bob Dupont", "Nice, testing now.", "2026-07-14 10:02"),
                 msg(
                     false,
                     "Bob Dupont",
                     "Found the root cause: https://github.com/whisperfish/presage/issues and the docs (https://docs.rs/presage).",
-                    "2026-07-17 10:30",
+                    "2026-07-14 10:30",
                 ),
-                Message { reply_to: Some(3), ..msg(true, "", "Thanks, having a look.", "2026-07-17 10:35") },
+                Message { reply_to: Some(3), ..msg(true, "", "Thanks, having a look.", "2026-07-14 10:35") },
             ]
             .into_iter()
             .enumerate()

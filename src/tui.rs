@@ -1947,12 +1947,15 @@ const HEADER: usize = 2;
 const FOOTER: usize = 1;
 
 /// Indices of the discussions in `folder` (`None`: the inbox) in display order: pinned
-/// first (in pin order), then the others.
+/// first (in pin order), then the others, the last written to first (those without
+/// messages last, in the order given).
 fn order(discussions: &[Discussion], folder: Option<Folder>) -> Vec<usize> {
-    let (mut pinned, others): (Vec<usize>, Vec<usize>) = (0..discussions.len())
+    let (mut pinned, mut others): (Vec<usize>, Vec<usize>) = (0..discussions.len())
         .filter(|&i| !discussions[i].hidden && discussions[i].folder == folder)
         .partition(|&i| discussions[i].pinned.is_some());
     pinned.sort_by_key(|&i| discussions[i].pinned);
+    let last_ms = |i: usize| discussions[i].messages.last().map(|m| m.sent_ms);
+    others.sort_by_key(|&i| std::cmp::Reverse(last_ms(i)));
     pinned.into_iter().chain(others).collect()
 }
 
@@ -3287,6 +3290,30 @@ mod tests {
         // Display order is now Alice, Bob, Family Group, Chloe.
         app.handle_key(key(KeyCode::Down));
         assert_eq!(app.handle_key(key(KeyCode::Enter)), Some(Action::Opened(1)));
+    }
+
+    #[test]
+    fn a_chat_written_to_goes_up_but_pinned_chats_stay() {
+        let mut app = app();
+        let chats = |app: &App| order(&app.discussions, None);
+        assert_eq!(
+            chats(&app),
+            [0, 1, 2, 3],
+            "Alice pinned, then the last written to"
+        );
+        let received = |id: u32| Message {
+            from_me: false,
+            ..Message::mine(id, "hi".to_string(), None, false)
+        };
+        app.push_message(3, received(1));
+        assert_eq!(chats(&app), [0, 3, 1, 2], "Chloe on top of the chats");
+        app.push_message(2, Message::mine(2, "sent".to_string(), None, false));
+        assert_eq!(chats(&app), [0, 2, 3, 1], "ours too");
+        app.push_message(0, received(3));
+        assert_eq!(chats(&app), [0, 2, 3, 1], "pinned: in its place");
+        let text = screen(&mut app);
+        assert!(text.find("Bob Dupont").unwrap() < text.find("Chloe Renard").unwrap());
+        assert!(text.find("Chloe Renard").unwrap() < text.find("Family Group").unwrap());
     }
 
     #[test]
