@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## v1.11.2
 
+- The chat list (and the folders) in order of the last message, the most recent first: a chat written to goes up; pinned chats stay in their place. Chats without messages come last.
 - "Name ..." shown beside the title when the end of the discussion is out of view (opened on the first new message, or reading further up): it was hidden at the bottom.
 
 ## v1.11.1
