@@ -2037,6 +2037,17 @@ fn unread_badge(n: usize) -> String {
     }
 }
 
+/// What goes in front of a chat in the list: [`unread_badge`], after "❗" when our last
+/// message was not sent (alone with more than ⑳ new messages, for want of room).
+fn list_badge(discussion: &Discussion) -> String {
+    let unread = unread_badge(discussion.unread);
+    match (discussion.not_sent(), discussion.unread) {
+        (false, _) => unread,
+        (true, 0..=20) => format!("\u{2757}{unread}"),
+        (true, _) => "\u{2757}".to_string(),
+    }
+}
+
 /// The entry `delta` places away from `selected` among `entries` (clamped).
 fn step(entries: &[usize], selected: usize, delta: isize) -> usize {
     let Some(pos) = entries.iter().position(|&i| i == selected) else {
@@ -2179,10 +2190,11 @@ fn draw_list(
                 if marked.contains(&idx) {
                     title.insert_str(0, "\u{2713} ");
                 }
-                // Number of new messages in front, right-aligned in a 4-column prefix: "  ③ ", "99+ ".
+                // Number of new messages in front, right-aligned in a 4-column prefix: "  ③ ",
+                // "99+ "; after a red "❗" when our last message was not sent: " ❗ ", "❗③ ".
                 let text = format!(
                     "{} {}",
-                    ui::pad_right(&unread_badge(discussion.unread), 3),
+                    ui::pad_right(&list_badge(discussion), 3),
                     ui::pad_left(&title, width.saturating_sub(4))
                 );
                 print_row(out, y as u16, &text, idx == selected)?;
@@ -3630,6 +3642,24 @@ mod tests {
         let text = screen(&mut app);
         assert!(!text.contains("Pinned"));
         assert!(text.contains("Chats"));
+    }
+
+    #[test]
+    fn chats_whose_last_message_was_not_sent_are_flagged() {
+        let mut app = app();
+        let mine = app.discussions[2].messages.len() - 1;
+        app.discussions[2].messages[mine].failed = true;
+        assert!(screen(&mut app).contains("\u{2757} Bob Dupont"));
+        app.discussions[2].unread = 3;
+        assert!(screen(&mut app).contains("\u{2757}\u{2462} Bob Dupont"));
+        app.discussions[2].unread = 21;
+        assert!(
+            screen(&mut app).contains(" \u{2757} Bob Dupont"),
+            "no room for 21"
+        );
+        // Ours sent since: no longer flagged.
+        app.push_message(2, Message::mine(1, "again".to_string(), None, false));
+        assert!(!screen(&mut app).contains('\u{2757}'));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A red "❗" in front of a chat in the list when our last message there was not sent (`Discussion::not_sent`).
 - Links without a scheme opened by `o` (in https): `example.org/page`, `www.example.org`, `example.org` (common top-level domains only, so that `notes.txt` is not one).
 
 ## v1.11.2

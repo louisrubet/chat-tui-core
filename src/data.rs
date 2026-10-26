@@ -346,6 +346,16 @@ impl Folder {
 }
 
 impl Discussion {
+    /// Our last message was not sent (the phone gave up): flagged in the chat list. One
+    /// failed before another of ours went is no longer flagged.
+    pub fn not_sent(&self) -> bool {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.from_me && !m.deleted)
+            .is_some_and(|m| m.failed)
+    }
+
     /// Index of the oldest unread message: the `unread`-th received one from the end.
     pub fn first_unread(&self) -> Option<usize> {
         if self.unread == 0 {
