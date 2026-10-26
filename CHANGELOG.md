@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Links without a scheme opened by `o` (in https): `example.org/page`, `www.example.org`, `example.org` (common top-level domains only, so that `notes.txt` is not one).
+
 ## v1.11.2
 
 - The chat list (and the folders) in order of the last message, the most recent first: a chat written to goes up; pinned chats stay in their place. Chats without messages come last.

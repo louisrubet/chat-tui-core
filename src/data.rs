@@ -409,13 +409,57 @@ pub fn attachment_label(content_type: &str, number: Option<usize>) -> String {
     }
 }
 
-/// Returns the http(s) links found in `text`, without trailing punctuation.
+/// Returns the links found in `text`, as written, without trailing punctuation: http(s)
+/// ones, and those without a scheme, like `example.org/page` or `www.example.org` (see
+/// [`url`]).
 pub fn links(text: &str) -> Vec<&str> {
     text.split_whitespace()
         .map(|word| word.trim_start_matches(['(', '<', '"', '\'']))
-        .filter(|word| word.starts_with("http://") || word.starts_with("https://"))
         .map(|word| word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', '>', '"', '\'']))
+        .filter(|word| {
+            word.starts_with("http://") || word.starts_with("https://") || is_bare_link(word)
+        })
         .collect()
+}
+
+/// The address to open for a `link` of [`links`]: https for one without a scheme.
+pub fn url(link: &str) -> String {
+    if link.contains("://") {
+        link.to_string()
+    } else {
+        format!("https://{link}")
+    }
+}
+
+/// Top-level domains enough to tell a link without a scheme or path (`example.org`) from a
+/// file name (`notes.txt`).
+const COMMON_TLDS: &[&str] = &[
+    "com", "org", "net", "fr", "be", "ch", "ca", "de", "uk", "eu", "io", "info", "app", "dev",
+];
+
+/// A link without a scheme: a domain name (`www.` ahead, a known top-level domain, or a
+/// path after), not an email address.
+fn is_bare_link(word: &str) -> bool {
+    if word.contains("://") || word.contains('@') {
+        return false;
+    }
+    let end = word.find(['/', '?', '#']).unwrap_or(word.len());
+    let (host, rest) = word.split_at(end);
+    let labels: Vec<&str> = host.split('.').collect();
+    let valid = labels.len() >= 2
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_alphanumeric() || c == '-')
+        });
+    let tld = labels[labels.len() - 1];
+    valid
+        && tld.len() >= 2
+        && tld.chars().all(|c| c.is_ascii_alphabetic())
+        && (host.starts_with("www.")
+            || rest.starts_with('/')
+            || COMMON_TLDS.contains(&tld.to_ascii_lowercase().as_str()))
 }
 
 fn dt(s: &str) -> NaiveDateTime {
@@ -545,6 +589,24 @@ mod tests {
             vec!["https://a.example/x", "http://b.example/y"]
         );
         assert!(links("no link here").is_empty());
+    }
+
+    #[test]
+    fn extracts_links_without_a_scheme() {
+        assert_eq!(
+            links("RDV: doctolib.fr/a/g3UFiHh2?o=a, www.example.co.jp et example.org."),
+            vec![
+                "doctolib.fr/a/g3UFiHh2?o=a",
+                "www.example.co.jp",
+                "example.org"
+            ]
+        );
+        assert!(
+            links("notes.txt e.g. i.e. 3.14 a.b/c mail@example.org ...").is_empty(),
+            "file names, abbreviations, numbers and email addresses are not links"
+        );
+        assert_eq!(url("doctolib.fr/a/x?o=a"), "https://doctolib.fr/a/x?o=a");
+        assert_eq!(url("http://example.org"), "http://example.org");
     }
 
     #[test]

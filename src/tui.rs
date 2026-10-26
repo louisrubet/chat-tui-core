@@ -493,11 +493,12 @@ impl App {
     fn open_targets(message: &Message, quoted: Option<&Message>) -> Vec<String> {
         let mut targets: Vec<String> = data::links(&message.text)
             .into_iter()
-            .map(str::to_string)
+            .map(data::url)
             .collect();
         for link in quoted.map_or(Vec::new(), |q| data::links(&q.text)) {
-            if !targets.iter().any(|target| target == link) {
-                targets.push(link.to_string());
+            let link = data::url(link);
+            if !targets.contains(&link) {
+                targets.push(link);
             }
         }
         targets.extend(Self::write_openable_attachments(message));
