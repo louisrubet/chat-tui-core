@@ -1,6 +1,6 @@
 [package]
 name = "chat-tui-core"
-version = "1.11.2"
+version = "1.11.3"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Terminal chat interface for messaging clients: chat list, inline images, reactions, emoji picker; the client brings its service"
