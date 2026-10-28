@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.11.4
+
+- emoji-expander 1.2.2: a stray colon (`fix: :bug:`) no longer keeps the shortcodes after it from expanding. Nothing changes here, which only looks shortcodes up.
+
 ## v1.11.3
 
 - A red "❗" in front of a chat in the list when our last message there was not sent (`Discussion::not_sent`).

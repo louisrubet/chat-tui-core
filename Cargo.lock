@@ -251,7 +251,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chat-tui-core"
-version = "1.11.3"
+version = "1.11.4"
 dependencies = [
  "arboard",
  "base64",
@@ -395,8 +395,8 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "emoji-expander"
-version = "1.2.1"
-source = "git+https://github.com/louisrubet/emoji-expander?tag=v1.2.1#545cb53917ed28b9663ec8014cdbdd49b8f88a84"
+version = "1.2.2"
+source = "git+https://github.com/louisrubet/emoji-expander?tag=v1.2.2#2ab4924ec093c588e9561ef44658ad41b4f29353"
 dependencies = [
  "lazy_static",
 ]

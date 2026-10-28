@@ -1,6 +1,6 @@
 [package]
 name = "chat-tui-core"
-version = "1.11.3"
+version = "1.11.4"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Terminal chat interface for messaging clients: chat list, inline images, reactions, emoji picker; the client brings its service"
@@ -26,7 +26,7 @@ notify-rust = "4.18"
 unicode-width = "0.2"
 rand = "0.9"
 # :shortcode: to emoji table.
-emoji-expander = { git = "https://github.com/louisrubet/emoji-expander", tag = "v1.2.1", version = "1.2.1" }
+emoji-expander = { git = "https://github.com/louisrubet/emoji-expander", tag = "v1.2.2", version = "1.2.2" }
 qrcode = { version = "0.14", default-features = false }
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
