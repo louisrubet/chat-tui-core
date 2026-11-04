@@ -48,6 +48,21 @@ impl ReadMarks {
             return Ok(());
         }
         *mark = newest;
+        self.save()
+    }
+
+    /// Records that the last message received in `discussion` is not read, as if it had
+    /// just come, and saves. Whether it was marked: not without a message received.
+    pub fn mark_unread(&mut self, discussion: &Discussion) -> io::Result<bool> {
+        let Some(last) = discussion.messages.iter().rev().find(|m| !m.from_me) else {
+            return Ok(false);
+        };
+        self.marks
+            .insert(discussion.id.clone(), last.sent_ms.saturating_sub(1));
+        self.save().map(|()| true)
+    }
+
+    fn save(&self) -> io::Result<()> {
         let content: String = self
             .marks
             .iter()
@@ -159,6 +174,30 @@ mod tests {
         marks.mark_read(&discussion).unwrap();
         discussion.messages.push(received(3));
         assert_eq!(ReadMarks::load(path).unread_count(&discussion), 1, "saved");
+    }
+
+    #[test]
+    fn marked_unread_the_last_message_received_is_new_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("read");
+        let received = |ms| Message {
+            from_me: false,
+            sent_ms: ms,
+            ..Message::mine(ms, String::new(), None, false)
+        };
+        let mut discussion = Discussion::new("alice", "Alice");
+        let mut marks = ReadMarks::load(path.clone());
+        assert!(!marks.mark_unread(&discussion).unwrap(), "nothing received");
+        discussion.messages = vec![
+            received(1),
+            received(2),
+            Message::mine(3, String::new(), None, false),
+        ];
+        marks.mark_read(&discussion).unwrap();
+        assert!(marks.mark_unread(&discussion).unwrap());
+        assert_eq!(ReadMarks::load(path).unread_count(&discussion), 1, "saved");
+        marks.mark_read(&discussion).unwrap();
+        assert_eq!(marks.unread_count(&discussion), 0, "read again");
     }
 
     #[test]

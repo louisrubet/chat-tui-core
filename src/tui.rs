@@ -52,6 +52,10 @@ pub enum Action {
     },
     /// [`App::settings`] changed: save them.
     SettingsChanged,
+    /// Mark the discussions read, here and on the other devices.
+    MarkRead(Vec<usize>),
+    /// Mark the discussions unread: their last message received is new again.
+    MarkUnread(Vec<usize>),
     /// The discussions were pinned or unpinned ([`Discussion::pinned`]): save them.
     PinToggled(Vec<usize>),
     /// The pinned discussions were reordered ([`Discussion::pinned`]): save their order.
@@ -918,6 +922,14 @@ impl App {
                 }
                 Action::PinToggled(chats)
             }
+            // Read unless all are: then unread.
+            KeyCode::Char('u') if !chats.is_empty() => {
+                if chats.iter().any(|&i| self.discussions[i].unread > 0) {
+                    Action::MarkRead(chats)
+                } else {
+                    Action::MarkUnread(chats)
+                }
+            }
             // Archived from the inbox, restored from a folder.
             KeyCode::Char('a') if actions && !folder_is(|f| f.is_none()).is_empty() => {
                 Action::Archive(folder_is(|f| f.is_none()))
@@ -1004,7 +1016,7 @@ impl App {
                     toggle(&mut self.marked, selected_chat);
                 }
             }
-            KeyCode::Char('P' | 'a' | 'r') | KeyCode::Delete if finding.browsing => {
+            KeyCode::Char('P' | 'u' | 'a' | 'r') | KeyCode::Delete if finding.browsing => {
                 return self.chat_command(key.code, &chats, selected_chat).flatten();
             }
             KeyCode::Char(_) if finding.browsing => {}
@@ -1202,7 +1214,7 @@ impl App {
                 KeyCode::Char(' ') if *selected < discussions.len() => {
                     toggle(&mut self.marked, *selected)
                 }
-                KeyCode::Char('P' | 'a' | 'r') | KeyCode::Delete => {
+                KeyCode::Char('P' | 'u' | 'a' | 'r') | KeyCode::Delete => {
                     let selected = *selected;
                     return self.chat_command(key.code, &list, selected).flatten();
                 }
@@ -1685,7 +1697,7 @@ impl App {
                  Esc unmark"
             ),
             (None, None, None) if marked > 0 => format!(
-                "{marked} marked   Space mark/unmark   P pin{}   Esc unmark",
+                "{marked} marked   Space mark/unmark   P pin{}   u (un)read   Esc unmark",
                 if actions {
                     "   a archive   Del delete"
                 } else {
@@ -1703,25 +1715,25 @@ impl App {
             }
             (None, None, None) if actions && self.capabilities.new_chat => {
                 "\u{2191}/\u{2193} select   Enter open   n new   / find   Space mark   P pin   \
-                 a archive   Del delete   p parameters   q quit"
+                 a archive   Del delete   u (un)read   p parameters   q quit"
                     .to_string()
             }
             (None, None, None) if actions => "\u{2191}/\u{2193} select   Enter open   / find   \
-                 Space mark   P pin   a archive   Del delete   p parameters   q quit"
+                 Space mark   P pin   a archive   Del delete   u (un)read   p parameters   q quit"
                 .to_string(),
             (None, None, None) => "\u{2191}/\u{2193} select   Enter open   / find   Space mark   \
                  P pin   \
-                 p parameters   q quit"
+                 u (un)read   p parameters   q quit"
                 .to_string(),
         };
         let find_footer = match (&self.screen, &self.deleting_chat, &self.status) {
             (_, Some(_), _) | (_, None, Some(_)) => list_footer.clone(),
             (Screen::Find(f), ..) if f.browsing && marked > 0 => format!(
                 "{marked} marked   Space mark/unmark   P pin   a archive   r restore   \
-                 Del delete   Esc unmark"
+                 Del delete   u (un)read   Esc unmark"
             ),
             (Screen::Find(f), ..) if f.browsing => "\u{2191}/\u{2193} select   Enter open   \
-                 Space mark   P pin   a archive   r restore   Del delete   / edit   Esc back"
+                 Space mark   P pin   a archive   r restore   Del delete   u (un)read   / edit   Esc back"
                 .to_string(),
             (Screen::Find(f), ..) if !f.query.trim().is_empty() && f.results.is_empty() => {
                 "Nothing found   Esc back".to_string()
@@ -3282,6 +3294,31 @@ mod tests {
         );
         assert!(text.contains("Family Group   Dad ..."));
         assert_eq!(text.matches("Dad ...").count(), 1);
+    }
+
+    #[test]
+    fn u_marks_chats_read_unless_all_are_then_unread() {
+        let mut app = app();
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.discussions[1].unread, 2);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('u'))),
+            Some(Action::MarkRead(vec![1]))
+        );
+        app.discussions[1].unread = 0;
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('u'))),
+            Some(Action::MarkUnread(vec![1]))
+        );
+        // Marked chats: read, as one of them is not.
+        app.discussions[1].unread = 1;
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('u'))),
+            Some(Action::MarkRead(vec![1, 2]))
+        );
     }
 
     #[test]

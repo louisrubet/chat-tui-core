@@ -84,6 +84,10 @@ pub enum Event {
     },
     /// A chat read on another device: none of its messages is new any more.
     Read { chat: ChatId },
+    /// A chat marked unread on another device, whose last message there is `latest`: its
+    /// last message received is new again. Not for the chat open, nor while `latest` is not
+    /// shown yet (arriving, it is new anyway).
+    Unread { chat: ChatId, latest: MessageId },
     /// Messages received while the interface was not running, once their history came:
     /// one notification sums up those still unread.
     Missed(Vec<(ChatId, MessageId)>),

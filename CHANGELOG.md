@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `u` in the chat list marks the selected or marked chats read (told to the backend, `Backend::read`), or unread when all are read already: their last message received is new again, here only (`Action::MarkRead`, `Action::MarkUnread`, `ReadMarks::mark_unread`).
+- `Event::Unread`: a chat marked unread on another device has its last message received new again (not the chat open, nor before that message is shown).
+
 ## v1.11.4
 
 - emoji-expander 1.2.2: a stray colon (`fix: :bug:`) no longer keeps the shortcodes after it from expanding. Nothing changes here, which only looks shortcodes up.

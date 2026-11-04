@@ -286,6 +286,23 @@ pub async fn run(
                         }
                         continue;
                     }
+                    Action::MarkRead(chats) => {
+                        for idx in chats {
+                            read(&mut app, idx, &backend, &mut read_marks);
+                            app.discussions[idx].unread = 0;
+                        }
+                        continue;
+                    }
+                    Action::MarkUnread(chats) => {
+                        let mut saved = true;
+                        for idx in chats {
+                            saved &= mark_unread(&mut app, idx, &mut read_marks);
+                        }
+                        if saved {
+                            app.set_status("Unread here only: the other devices cannot be told");
+                        }
+                        continue;
+                    }
                     Action::PinToggled(chats) => {
                         for idx in chats {
                             let chat = &app.discussions[idx];
@@ -627,6 +644,15 @@ fn handle_event(
                 }
             }
         }
+        Event::Unread { chat, latest } => {
+            if let Some(idx) = position(app, &chat)
+                && !app.is_open(idx)
+                && app.discussions[idx].unread == 0
+                && app.discussions[idx].position_of(&latest).is_some()
+            {
+                mark_unread(app, idx, read_marks);
+            }
+        }
         Event::Missed(messages) => {
             if app.settings.notifications
                 && let Some((summary, body)) = missed_notice(app, &messages)
@@ -705,6 +731,22 @@ fn read(app: &mut App, idx: usize, backend: &impl Backend, read_marks: &mut Read
     }
     if let Err(e) = read_marks.mark_read(discussion) {
         app.set_status(format!("Cannot save the read state: {e}"));
+    }
+}
+
+/// Discussion `idx` marked unread here: its last message received is new again.
+/// Whether it was saved.
+fn mark_unread(app: &mut App, idx: usize, read_marks: &mut ReadMarks) -> bool {
+    match read_marks.mark_unread(&app.discussions[idx]) {
+        Ok(_) => {
+            let discussion = &mut app.discussions[idx];
+            discussion.unread = read_marks.unread_count(discussion);
+            true
+        }
+        Err(e) => {
+            app.set_status(format!("Cannot save the read state: {e}"));
+            false
+        }
     }
 }
 
@@ -882,6 +924,95 @@ mod tests {
         d.messages = messages.iter().map(|m| received(m, "Ann")).collect();
         d.unread = unread;
         d
+    }
+
+    /// Tells nothing to anyone: what reads are told is recorded.
+    #[derive(Default)]
+    struct Quiet {
+        read: std::cell::RefCell<Vec<(ChatId, MessageId)>>,
+    }
+
+    // 'static futures: not async fns, which would borrow `self`.
+    #[allow(clippy::manual_async_fn)]
+    impl Backend for Quiet {
+        fn capabilities(&self) -> crate::backend::Capabilities {
+            Default::default()
+        }
+        fn send(
+            &self,
+            _: &ChatId,
+            _: Draft,
+        ) -> impl Future<Output = crate::backend::Result<Message>> + 'static {
+            async { unreachable!() }
+        }
+        fn react(
+            &self,
+            _: &ChatId,
+            _: &Message,
+            _: &str,
+            _: bool,
+        ) -> impl Future<Output = crate::backend::Result<()>> + 'static {
+            async { unreachable!() }
+        }
+        fn delete(
+            &self,
+            _: &ChatId,
+            _: &Message,
+        ) -> impl Future<Output = crate::backend::Result<()>> + 'static {
+            async { unreachable!() }
+        }
+        fn download(
+            &self,
+            _: &ChatId,
+            _: &Message,
+        ) -> impl Future<Output = crate::backend::Result<Downloaded>> + 'static {
+            async { unreachable!() }
+        }
+        fn read(&self, chat: &ChatId, last: &Message) {
+            self.read.borrow_mut().push((chat.clone(), last.id.clone()));
+        }
+    }
+
+    #[test]
+    fn chats_marked_unread_elsewhere_have_their_last_message_new_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            name: "test".to_string(),
+            version: String::new(),
+            settings: dir.path().join("settings"),
+            read_marks: dir.path().join("read"),
+            pins: dir.path().join("pinned"),
+            open: None,
+        };
+        let mut marks = ReadMarks::load(config.read_marks.clone());
+        let mut app = App::new(vec![chat("a", &["a1", "a2"], 0), chat("b", &["b1"], 0)]);
+        // Sent one after the other.
+        for (i, m) in app.discussions[0].messages.iter_mut().enumerate() {
+            m.sent_ms = 1000 + i as u64;
+        }
+        marks.mark_read(&app.discussions[0]).unwrap();
+        marks.mark_read(&app.discussions[1]).unwrap();
+        let backend = Quiet::default();
+        let mut unread = |app: &mut App, chat: &str, latest: &str| {
+            let (chat, latest) = (chat.to_string(), latest.to_string());
+            let event = Event::Unread { chat, latest };
+            handle_event(app, event, &backend, &mut marks, &config);
+        };
+        unread(&mut app, "a", "a2");
+        assert_eq!(app.discussions[0].unread, 1, "its last message new again");
+        unread(&mut app, "a", "a2");
+        assert_eq!(app.discussions[0].unread, 1, "once");
+        unread(&mut app, "b", "b2");
+        assert_eq!(
+            app.discussions[1].unread, 0,
+            "b2 not here yet: new when it comes"
+        );
+        assert_eq!(
+            ReadMarks::load(config.read_marks.clone()).unread_count(&app.discussions[0]),
+            1,
+            "saved"
+        );
+        assert!(backend.read.borrow().is_empty(), "nothing told");
     }
 
     fn missed(ids: &[(&str, &str)]) -> Vec<(ChatId, MessageId)> {
