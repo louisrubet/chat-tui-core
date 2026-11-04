@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.12.0
 
 - The chat list on two lines per chat, as on the phone: the name in bold and when the chat was last written to ("14:02", "Yesterday", "Fri", "Oct 28"), then its last message further in, in italics and dimmed ("You: …", the sender's first name in groups, "Photo"). With new messages, the name and the time in the accent, the last message not dimmed. A page of the list (PageUp / PageDown) is half as many chats.
 - The help in the footer as keys in the accent and dimmed labels, cut to the width of the terminal: the hints that fit, the last one ("q quit", "Esc back") and "? more"; `?` shows them all, on as many lines as they take (and back). Not where `?` is typed: the new chat, the search being typed, a message.
