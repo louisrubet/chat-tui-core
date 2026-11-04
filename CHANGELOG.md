@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.12.1
+
+- No more flicker: each screen is shown once drawn, not cleared then half drawn (synchronized updates, in Ghostty, kitty, WezTerm, foot, iTerm2…; other terminals ignore them).
+
 ## v1.12.0
 
 - The chat list on two lines per chat, as on the phone: the name in bold and when the chat was last written to ("14:02", "Yesterday", "Fri", "Oct 28"), then its last message further in, in italics and dimmed ("You: …", the sender's first name in groups, "Photo"). With new messages, the name and the time in the accent, the last message not dimmed. A page of the list (PageUp / PageDown) is half as many chats.

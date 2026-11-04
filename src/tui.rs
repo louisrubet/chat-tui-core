@@ -1668,7 +1668,16 @@ impl App {
     }
 
     /// Draws the current screen on a `w` x `h` terminal.
+    /// Draws the screen, shown by the terminal once drawn (not cleared, then half drawn) where
+    /// it supports synchronized updates; others ignore them.
     pub fn draw(&mut self, out: &mut impl Write, w: u16, h: u16) -> io::Result<()> {
+        queue!(out, terminal::BeginSynchronizedUpdate)?;
+        let drawn = self.draw_screen(out, w, h);
+        queue!(out, terminal::EndSynchronizedUpdate)?;
+        drawn
+    }
+
+    fn draw_screen(&mut self, out: &mut impl Write, w: u16, h: u16) -> io::Result<()> {
         if let Some(text) = self.clipboard.take() {
             copy_to_clipboard(out, &text)?;
         }
@@ -3354,11 +3363,12 @@ mod tests {
         type_text(&mut app, "a :rocket: b");
         let mut out = Vec::new();
         app.draw(&mut out, 80, 30).unwrap();
-        // The draw ends with the cursor move: "> a 🚀 b" takes 8 columns (the rocket two),
-        // so the cursor goes to column 8, written 9 by the 1-based escape sequence.
+        // The draw ends with the cursor move (then the end of the update): "> a 🚀 b" takes 8
+        // columns (the rocket two), so the cursor goes to column 8, written 9 by the 1-based
+        // escape sequence.
         let tail = String::from_utf8(out).unwrap();
         assert!(
-            tail.ends_with("\x1b[30;9H\x1b[?25h"),
+            tail.ends_with("\x1b[30;9H\x1b[?25h\x1b[?2026l"),
             "{:?}",
             &tail[tail.len().saturating_sub(20)..]
         );
@@ -3868,6 +3878,15 @@ mod tests {
             line(&footer_lines(asked, ui::Tone::Normal, 20, true, false)),
             [asked]
         );
+    }
+
+    #[test]
+    fn the_screen_is_shown_once_drawn() {
+        let mut out = Vec::new();
+        app().draw(&mut out, 80, 30).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.starts_with("\x1b[?2026h"), "begins the update");
+        assert!(out.ends_with("\x1b[?2026l"), "ends it");
     }
 
     #[test]
