@@ -1678,6 +1678,12 @@ impl App {
             _ => "",
         };
         let marked = self.marked.len();
+        // Help dimmed, unlike what is asked or told.
+        let footer_tone = if self.deleting_chat.is_some() || self.purging || self.status.is_some() {
+            ui::Tone::Normal
+        } else {
+            ui::Tone::Dim
+        };
         let list_footer = match (&self.deleting_chat, &self.status, self.folder) {
             (Some(chats), ..) if chats.len() == 1 => format!(
                 "Delete \u{201c}{}\u{201d}{for_good}?   y yes   any other key: no",
@@ -1751,7 +1757,7 @@ impl App {
                 None,
                 self.folder,
                 true,
-                &list_footer,
+                (&list_footer, footer_tone),
                 *selected,
                 scroll,
                 w,
@@ -1809,7 +1815,10 @@ impl App {
                 Some("Forward to\u{2026}"),
                 None,
                 false,
-                "\u{2191}/\u{2193} select chat   Enter forward   Esc cancel",
+                (
+                    "\u{2191}/\u{2193} select chat   Enter forward   Esc cancel",
+                    ui::Tone::Dim,
+                ),
                 *selected,
                 scroll,
                 w,
@@ -1828,7 +1837,7 @@ impl App {
                 &self.discussions,
                 &self.marked,
                 finding,
-                &find_footer,
+                (&find_footer, footer_tone),
                 w,
                 h,
             ),
@@ -1849,7 +1858,12 @@ impl App {
                              , next number   Esc back"
                         .to_string(),
                 };
-                draw_new_chat(out, new, &help, w, h)
+                let tone = if self.status.is_some() {
+                    ui::Tone::Normal
+                } else {
+                    ui::Tone::Dim
+                };
+                draw_new_chat(out, new, (&help, tone), w, h)
             }
         }
     }
@@ -1909,22 +1923,72 @@ fn print_styled(
     styles: &[Styled],
     selected: bool,
 ) -> io::Result<()> {
-    print_line(out, y, text, styles, selected, false)
+    print_line(out, y, text, styles, &[], selected)
 }
 
-/// [`print_styled`], in red if `alert`.
+/// [`print_row`] all in `tone`.
+fn print_toned(
+    out: &mut impl Write,
+    y: u16,
+    text: &str,
+    tone: ui::Tone,
+    selected: bool,
+) -> io::Result<()> {
+    print_line(out, y, text, &[], &[whole(text, tone)], selected)
+}
+
+/// `tone` on the bytes `start..end` of a line.
+#[derive(Debug, Clone, Copy)]
+struct Toned {
+    start: usize,
+    end: usize,
+    tone: ui::Tone,
+}
+
+/// All of `text` in `tone`.
+fn whole(text: &str, tone: ui::Tone) -> Toned {
+    Toned {
+        start: 0,
+        end: text.len(),
+        tone,
+    }
+}
+
+/// The accent: the blue of the terminal's palette, so its theme's.
+const ACCENT: Color = Color::DarkBlue;
+
+/// The colours of [`ui::Tone::Person`], from the terminal's palette: not red (alerts), nor
+/// blue (the accent).
+const PERSON_COLORS: [Color; ui::PERSON_TONES as usize] = [
+    Color::DarkCyan,
+    Color::DarkMagenta,
+    Color::DarkGreen,
+    Color::DarkYellow,
+    Color::Cyan,
+    Color::Magenta,
+];
+
+/// Whether to show colours: not when `NO_COLOR` is set (https://no-color.org).
+fn colors() -> bool {
+    static COLORS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *COLORS.get_or_init(|| std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()))
+}
+
+/// [`print_styled`], in the `tones` given (the last one wins where they overlap). Selected,
+/// the line is in the accent colour (red when an alert), reversed.
 fn print_line(
     out: &mut impl Write,
     y: u16,
     text: &str,
     styles: &[Styled],
+    tones: &[Toned],
     selected: bool,
-    alert: bool,
 ) -> io::Result<()> {
     queue!(out, cursor::MoveTo(0, y))?;
     let mut cuts: Vec<usize> = styles
         .iter()
         .flat_map(|s| [s.start, s.end])
+        .chain(tones.iter().flat_map(|t| [t.start, t.end]))
         .filter(|&at| at < text.len())
         .collect();
     cuts.extend([0, text.len()]);
@@ -1936,11 +2000,26 @@ fn print_line(
             continue;
         }
         queue!(out, SetAttribute(Attribute::Reset))?;
-        if alert {
-            queue!(out, SetForegroundColor(Color::Red))?;
+        let tone = tones
+            .iter()
+            .rev()
+            .find(|t| t.start <= start && end <= t.end)
+            .map_or(ui::Tone::Normal, |t| t.tone);
+        let color = match tone {
+            _ if !colors() => None,
+            ui::Tone::Alert => Some(Color::Red),
+            _ if selected => Some(ACCENT),
+            ui::Tone::Accent => Some(ACCENT),
+            ui::Tone::Person(n) => PERSON_COLORS.get(n as usize).copied(),
+            ui::Tone::Normal | ui::Tone::Dim => None,
+        };
+        if let Some(color) = color {
+            queue!(out, SetForegroundColor(color))?;
         }
         if selected {
             queue!(out, SetAttribute(Attribute::Reverse))?;
+        } else if tone == ui::Tone::Dim {
+            queue!(out, SetAttribute(Attribute::Dim))?;
         }
         for styled in styles.iter().filter(|s| s.start <= start && end <= s.end) {
             let attribute = match styled.style {
@@ -2141,7 +2220,8 @@ fn draw_list(
     // The folder shown, `None` for the inbox (followed by the folders if `with_folders`).
     folder: Option<Folder>,
     with_folders: bool,
-    help: &str,
+    // The footer, dimmed unless asking or telling something.
+    help: (&str, ui::Tone),
     selected: usize,
     scroll: &mut usize,
     w: u16,
@@ -2182,15 +2262,25 @@ fn draw_list(
                 } else {
                     ui::pad_left(&format!("{name} {version}"), width)
                 };
+                let name_end = name.len().min(text.len());
                 let bold = Styled {
                     start: 0,
-                    end: name.len().min(text.len()),
+                    end: name_end,
                     style: data::Style::Bold,
                 };
-                print_styled(out, y as u16, &text, &[bold], false)?;
+                let version = Toned {
+                    start: name_end,
+                    end: text.len(),
+                    tone: ui::Tone::Dim,
+                };
+                print_line(out, y as u16, &text, &[bold], &[version], false)?;
                 continue;
             }
-            Some(Row::Title(title)) => ui::pad_left(title, width),
+            Some(Row::Title(title)) => {
+                let text = ui::pad_left(title, width);
+                print_toned(out, y as u16, &text, ui::Tone::Dim, false)?;
+                continue;
+            }
             Some(Row::Chat(idx)) => {
                 let idx = *idx;
                 let discussion = &discussions[idx];
@@ -2204,12 +2294,30 @@ fn draw_list(
                 }
                 // Number of new messages in front, right-aligned in a 4-column prefix: "  ③ ",
                 // "99+ "; after a red "❗" when our last message was not sent: " ❗ ", "❗③ ".
-                let text = format!(
-                    "{} {}",
-                    ui::pad_right(&list_badge(discussion), 3),
-                    ui::pad_left(&title, width.saturating_sub(4))
-                );
-                print_row(out, y as u16, &text, idx == selected)?;
+                let badge = ui::pad_right(&list_badge(discussion), 3);
+                let text = format!("{badge} {}", ui::pad_left(&title, width.saturating_sub(4)));
+                let mut tones = vec![Toned {
+                    start: 0,
+                    end: badge.len(),
+                    tone: ui::Tone::Accent,
+                }];
+                if let Some(at) = badge.find('\u{2757}') {
+                    tones.push(Toned {
+                        start: at,
+                        end: at + '\u{2757}'.len_utf8(),
+                        tone: ui::Tone::Alert,
+                    });
+                }
+                // With new messages: in bold, as on the phone.
+                let bold: Vec<Styled> = (discussion.unread > 0)
+                    .then(|| Styled {
+                        start: badge.len() + 1,
+                        end: text.trim_end().len(),
+                        style: data::Style::Bold,
+                    })
+                    .into_iter()
+                    .collect();
+                print_line(out, y as u16, &text, &bold, &tones, idx == selected)?;
                 continue;
             }
             Some(Row::Folder(f, n)) => {
@@ -2225,10 +2333,11 @@ fn draw_list(
         print_row(out, y as u16, &text, false)?;
     }
 
-    print_row(
+    print_toned(
         out,
         height.saturating_sub(1) as u16,
-        &ui::pad_left(help, width),
+        &ui::pad_left(help.0, width),
+        help.1,
         false,
     )?;
     Ok(())
@@ -2242,7 +2351,8 @@ fn draw_find(
     // Chats marked for the next action.
     marked: &[usize],
     finding: &mut Finding,
-    help: &str,
+    // The footer, dimmed unless telling something.
+    help: (&str, ui::Tone),
     w: u16,
     h: u16,
 ) -> io::Result<()> {
@@ -2347,10 +2457,11 @@ fn draw_find(
             selected,
         )?;
     }
-    print_row(
+    print_toned(
         out,
         height.saturating_sub(1) as u16,
-        &ui::pad_left(help, width),
+        &ui::pad_left(help.0, width),
+        help.1,
         false,
     )?;
     Ok(())
@@ -2361,7 +2472,8 @@ fn draw_find(
 fn draw_new_chat(
     out: &mut impl Write,
     new: &mut Recipients,
-    help: &str,
+    // The footer, dimmed unless telling something.
+    help: (&str, ui::Tone),
     w: u16,
     h: u16,
 ) -> io::Result<()> {
@@ -2417,10 +2529,11 @@ fn draw_new_chat(
             selected,
         )?;
     }
-    print_row(
+    print_toned(
         out,
         height.saturating_sub(1) as u16,
-        &ui::pad_left(help, width),
+        &ui::pad_left(help.0, width),
+        help.1,
         false,
     )?;
     Ok(())
@@ -2450,7 +2563,13 @@ fn draw_settings(
     let width = w as usize;
     let height = h as usize;
     queue!(out, Clear(ClearType::All), cursor::Hide)?;
-    print_row(out, 0, &ui::pad_left("Parameters", width), false)?;
+    print_toned(
+        out,
+        0,
+        &ui::pad_left("Parameters", width),
+        ui::Tone::Accent,
+        false,
+    )?;
     for (i, (label, value)) in SETTINGS.iter().enumerate() {
         let mark = if *value(settings) { "x" } else { " " };
         print_row(
@@ -2461,10 +2580,15 @@ fn draw_settings(
         )?;
     }
     let help = "\u{2191}/\u{2193} select   Space/Enter toggle   Esc back   q quit";
-    print_row(
+    print_toned(
         out,
         height.saturating_sub(1) as u16,
         &ui::pad_left(status.unwrap_or(help), width),
+        if status.is_some() {
+            ui::Tone::Normal
+        } else {
+            ui::Tone::Dim
+        },
         false,
     )?;
     Ok(())
@@ -2563,6 +2687,8 @@ fn draw_discussion(
     let mut cursor_pos = None;
     // Footer row shown reversed: the match under the cursor of the completion.
     let mut highlight = None;
+    // The help is dimmed, unlike the draft or what is asked or told.
+    let mut footer_tone = ui::Tone::Normal;
     // Footer rows with their styles (only the draft has some).
     let footer: Vec<(String, Vec<Styled>)> = match composing {
         Some(
@@ -2661,6 +2787,9 @@ fn draw_discussion(
                 } else {
                     "\u{2191} select   Enter new message   Esc back   q quit"
                 };
+                if status.is_none() {
+                    footer_tone = ui::Tone::Dim;
+                }
                 vec![(status.unwrap_or(help).to_string(), Vec::new())]
             }
         },
@@ -2714,7 +2843,27 @@ fn draw_discussion(
         _ => discussion.title.clone(),
     };
     queue!(out, Clear(ClearType::All), cursor::Hide)?;
-    print_row(out, 0, &ui::pad_left(&title, width), false)?;
+    // The title in bold accent, "Name ..." beside it dimmed.
+    let title = ui::pad_left(&title, width);
+    let title_end = discussion.title.len().min(title.len());
+    let bold = Styled {
+        start: 0,
+        end: title_end,
+        style: data::Style::Bold,
+    };
+    let tones = [
+        Toned {
+            start: 0,
+            end: title_end,
+            tone: ui::Tone::Accent,
+        },
+        Toned {
+            start: title_end,
+            end: title.len(),
+            tone: ui::Tone::Dim,
+        },
+    ];
+    print_line(out, 0, &title, &[bold], &tones, false)?;
     print_row(out, 1, &" ".repeat(width), false)?;
 
     let mut visible_messages = std::collections::BTreeSet::new();
@@ -2729,7 +2878,7 @@ fn draw_discussion(
             let selected = selecting
                 && rl.msg_idx == Some(selected_msg)
                 && !matches!(rl.kind, ui::LineKind::Image { .. });
-            print_line(out, y, &text, &styles, selected, rl.alert)?;
+            print_line(out, y, &text, &styles, &[whole(&text, rl.tone)], selected)?;
         } else {
             print_row(out, y, &" ".repeat(width), false)?;
         }
@@ -2737,11 +2886,13 @@ fn draw_discussion(
 
     let footer_y = height.saturating_sub(footer.len());
     for (row, (text, styles)) in footer.iter().enumerate() {
-        print_styled(
+        let text = ui::pad_left(text, width);
+        print_line(
             out,
             (footer_y + row) as u16,
-            &ui::pad_left(text, width),
+            &text,
             styles,
+            &[whole(&text, footer_tone)],
             highlight == Some(row),
         )?;
     }

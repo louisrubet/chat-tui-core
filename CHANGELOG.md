@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Colours, from the terminal's palette (so its theme's), none with `NO_COLOR`: the selection in blue (reversed), the title of the discussion and the new message counts in blue, chats with new messages in bold, each person's name in a colour of their own (`ui::person_tone`); times, dates, labels and help dimmed. `ui::RenderLine::alert` becomes `tone` (`ui::Tone`).
 - `u` in the chat list marks the selected or marked chats read (told to the backend, `Backend::read`), or unread when all are read already: their last message received is new again, here only (`Action::MarkRead`, `Action::MarkUnread`, `ReadMarks::mark_unread`).
 - `Event::Unread`: a chat marked unread on another device has its last message received new again (not the chat open, nor before that message is shown).
 

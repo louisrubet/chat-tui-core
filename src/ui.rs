@@ -46,14 +46,41 @@ pub enum LineKind {
     },
 }
 
+/// How a line, or a part of one, stands out, in colour unless `NO_COLOR` is set: the
+/// formatting of its text aside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Tone {
+    #[default]
+    Normal,
+    /// Secondary: times, labels, help.
+    Dim,
+    /// To be seen first: new messages, the title of the discussion.
+    Accent,
+    /// Something went wrong (a message not sent).
+    Alert,
+    /// Someone, by a number of their own ([`person_tone`]).
+    Person(u8),
+}
+
+/// How many [`Tone::Person`] there are.
+pub const PERSON_TONES: u8 = 6;
+
+/// The tone of `author` (an id, or a name): the same on every run.
+pub fn person_tone(author: &str) -> Tone {
+    // FNV-1a: unlike the hasher of the standard library, the same on every run.
+    let hash = author.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    });
+    Tone::Person((hash % u32::from(PERSON_TONES)) as u8)
+}
+
 pub struct RenderLine {
     /// Index of the message this line belongs to, if any (blank/date lines have None).
     pub msg_idx: Option<usize>,
     pub kind: LineKind,
     /// Formatting of the line text.
     pub styles: Vec<Styled>,
-    /// Shown in red: something went wrong (a message not sent).
-    pub alert: bool,
+    pub tone: Tone,
 }
 
 impl RenderLine {
@@ -62,8 +89,13 @@ impl RenderLine {
             msg_idx,
             kind,
             styles: Vec::new(),
-            alert: false,
+            tone: Tone::Normal,
         }
+    }
+
+    /// The same, in `tone`.
+    pub fn toned(self, tone: Tone) -> Self {
+        RenderLine { tone, ..self }
     }
 }
 
@@ -325,10 +357,13 @@ pub fn build_discussion_lines(
     for (idx, m) in discussion.messages.iter().enumerate() {
         let date = m.timestamp.date();
         if last_date != Some(date) {
-            out.push(RenderLine::new(
-                None,
-                LineKind::Center(date.format("%A, %B %-d, %Y").to_string()),
-            ));
+            out.push(
+                RenderLine::new(
+                    None,
+                    LineKind::Center(date.format("%A, %B %-d, %Y").to_string()),
+                )
+                .toned(Tone::Dim),
+            );
             last_date = Some(date);
         }
         if let Some((first, count)) = new_from
@@ -340,10 +375,10 @@ pub fn build_discussion_lines(
                 format!("{count} new messages")
             };
             let rule = "\u{2500}\u{2500}\u{2500}";
-            out.push(RenderLine::new(
-                None,
-                LineKind::Center(format!("{rule} {label} {rule}")),
-            ));
+            out.push(
+                RenderLine::new(None, LineKind::Center(format!("{rule} {label} {rule}")))
+                    .toned(Tone::Accent),
+            );
         }
 
         let time_str = m.timestamp.format("%H:%M").to_string();
@@ -367,7 +402,7 @@ pub fn build_discussion_lines(
 
         if m.from_me {
             for h in header {
-                out.push(RenderLine::new(Some(idx), LineKind::Right(h)));
+                out.push(RenderLine::new(Some(idx), LineKind::Right(h)).toned(Tone::Dim));
             }
             for r in wrap_ranges(text, width) {
                 let styles = styles_in(&styles, r.clone(), 0);
@@ -391,7 +426,7 @@ pub fn build_discussion_lines(
                         end: warning.len(),
                         style: Style::Bold,
                     }],
-                    alert: true,
+                    tone: Tone::Alert,
                     ..RenderLine::new(
                         Some(idx),
                         LineKind::Right(format!("{warning}   {time_str}")),
@@ -404,18 +439,25 @@ pub fn build_discussion_lines(
                         end: "Sending\u{2026}".len(),
                         style: Style::Italic,
                     }],
+                    tone: Tone::Dim,
                     ..RenderLine::new(Some(idx), LineKind::Right("Sending\u{2026}".to_string()))
                 });
             } else {
-                out.push(RenderLine::new(Some(idx), LineKind::Right(time_str)));
+                out.push(RenderLine::new(Some(idx), LineKind::Right(time_str)).toned(Tone::Dim));
             }
         } else {
-            out.push(RenderLine::new(
-                Some(idx),
-                LineKind::Left(m.sender_name.clone()),
-            ));
+            let name = &m.sender_name;
+            out.push(RenderLine {
+                styles: vec![Styled {
+                    start: 0,
+                    end: name.len(),
+                    style: Style::Bold,
+                }],
+                tone: person_tone(m.author.as_deref().unwrap_or(name)),
+                ..RenderLine::new(Some(idx), LineKind::Left(name.clone()))
+            });
             for h in header {
-                out.push(RenderLine::new(Some(idx), LineKind::Left(h)));
+                out.push(RenderLine::new(Some(idx), LineKind::Left(h)).toned(Tone::Dim));
             }
             for r in wrap_ranges(text, width) {
                 let styles = styles_in(&styles, r.clone(), 0);
@@ -431,7 +473,7 @@ pub fn build_discussion_lines(
                     LineKind::Left(m.reaction_summary()),
                 ));
             }
-            out.push(RenderLine::new(Some(idx), LineKind::Left(time_str)));
+            out.push(RenderLine::new(Some(idx), LineKind::Left(time_str)).toned(Tone::Dim));
         }
 
         // Blank spacer between messages for readability.
@@ -577,6 +619,44 @@ mod tests {
         };
         let lines = build_discussion_lines(&discussion, 40, None, &Thumbnails::default());
         assert!(texts(&lines)[2].starts_with("\u{26a0} Not sent   "));
+    }
+
+    #[test]
+    fn each_person_keeps_a_tone_secondary_lines_are_dimmed() {
+        use super::{Thumbnails, Tone, build_discussion_lines, person_tone};
+        use crate::data::{Discussion, Message};
+        // The same on every run: FNV-1a of "+33600000000" is 0xbb60_2f4a, 2 modulo 6.
+        assert_eq!(person_tone("+33600000000"), Tone::Person(2));
+        assert_eq!(person_tone("bob"), person_tone("bob"));
+        let tones: std::collections::HashSet<Tone> =
+            ["ann", "bob", "carl", "dora", "eve", "fred", "gus", "hal"]
+                .iter()
+                .map(|name| person_tone(name))
+                .collect();
+        assert!(tones.len() >= 4, "spread: {tones:?}");
+
+        let mut theirs = Message::mine(1, "hi".to_string(), None, false);
+        theirs.from_me = false;
+        theirs.sender_name = "Ann".to_string();
+        theirs.author = Some("ann-id".to_string());
+        let discussion = Discussion {
+            messages: vec![theirs, Message::mine(2, "hello".to_string(), None, false)],
+            ..Discussion::new("t", "t")
+        };
+        let lines = build_discussion_lines(&discussion, 40, None, &Thumbnails::default());
+        let tones: Vec<Tone> = lines.iter().map(|l| l.tone).collect();
+        assert_eq!(
+            tones,
+            [
+                Tone::Dim,             // date
+                person_tone("ann-id"), // Ann, by her id
+                Tone::Normal,          // hi
+                Tone::Dim,             // time
+                Tone::Normal,          // blank
+                Tone::Normal,          // hello
+                Tone::Dim,             // time
+            ]
+        );
     }
 
     #[test]
