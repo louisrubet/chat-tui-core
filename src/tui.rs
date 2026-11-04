@@ -2502,12 +2502,19 @@ fn draw_list(
                 let text = format!("{badge} {name}{time}");
                 let name_start = badge.len() + 1;
                 let time_start = name_start + name.len();
-                // With new messages: the name in bold, the time in the accent, as on the phone.
+                // The name in bold, over its preview; with new messages, the name and the time
+                // in the accent.
                 let unread = discussion.unread > 0;
+                let name_end = name_start + name.trim_end().len();
                 let mut tones = vec![
                     Toned {
                         start: 0,
                         end: badge.len(),
+                        tone: ui::Tone::Accent,
+                    },
+                    Toned {
+                        start: name_start,
+                        end: if unread { name_end } else { name_start },
                         tone: ui::Tone::Accent,
                     },
                     Toned {
@@ -2527,30 +2534,30 @@ fn draw_list(
                         tone: ui::Tone::Alert,
                     });
                 }
-                let bold: Vec<Styled> = unread
-                    .then(|| Styled {
-                        start: name_start,
-                        end: name_start + name.trim_end().len(),
-                        style: data::Style::Bold,
-                    })
-                    .into_iter()
-                    .collect();
-                print_line(out, y as u16, &text, &bold, &tones, idx == selected)?;
+                let bold = Styled {
+                    start: name_start,
+                    end: name_end,
+                    style: data::Style::Bold,
+                };
+                print_line(out, y as u16, &text, &[bold], &tones, idx == selected)?;
                 continue;
             }
             Some(Row::Preview(idx)) => {
-                // Dimmed, unless new.
-                let text = format!(
-                    "    {}",
-                    ui::pad_left(&preview(&discussions[*idx]), width.saturating_sub(5))
-                );
-                let text = ui::pad_left(&text, width);
+                // In italics, under the name and further in; dimmed, unless new.
+                let preview = ui::trunc(&preview(&discussions[*idx]), width.saturating_sub(7));
+                let text = ui::pad_left(&format!("      {preview}"), width);
+                let italic = Styled {
+                    start: 6,
+                    end: 6 + preview.len(),
+                    style: data::Style::Italic,
+                };
                 let tone = if discussions[*idx].unread > 0 {
                     ui::Tone::Normal
                 } else {
                     ui::Tone::Dim
                 };
-                print_toned(out, y as u16, &text, tone, *idx == selected)?;
+                let tones = [whole(&text, tone)];
+                print_line(out, y as u16, &text, &[italic], &tones, *idx == selected)?;
                 continue;
             }
             Some(Row::Folder(f, n)) => {
@@ -3779,7 +3786,7 @@ mod tests {
         let preview = preview(&app.discussions[0]);
         assert!(!preview.is_empty());
         assert!(
-            lines[at + 1].starts_with(&format!("    {preview}")),
+            lines[at + 1].starts_with(&format!("      {preview}")),
             "{:?}",
             lines[at + 1]
         );
