@@ -401,6 +401,8 @@ pub struct App {
     purging: bool,
     /// The folder shown by the chat list; `None` for the inbox.
     folder: Option<Folder>,
+    /// All the keys shown in the footer (`?`), not only those that fit on a line.
+    all_keys: bool,
 }
 
 impl App {
@@ -431,6 +433,7 @@ impl App {
             finding: None,
             purging: false,
             folder: None,
+            all_keys: false,
         }
     }
 
@@ -1019,6 +1022,7 @@ impl App {
             KeyCode::Char('P' | 'u' | 'a' | 'r') | KeyCode::Delete if finding.browsing => {
                 return self.chat_command(key.code, &chats, selected_chat).flatten();
             }
+            KeyCode::Char('?') if finding.browsing => self.all_keys = !self.all_keys,
             KeyCode::Char(_) if finding.browsing => {}
             KeyCode::Backspace => {
                 finding.browsing = false;
@@ -1218,6 +1222,7 @@ impl App {
                     let selected = *selected;
                     return self.chat_command(key.code, &list, selected).flatten();
                 }
+                KeyCode::Char('?') => self.all_keys = !self.all_keys,
                 KeyCode::Char('X')
                     if self.capabilities.chat_actions && self.folder == Some(Folder::Trash) =>
                 {
@@ -1507,6 +1512,7 @@ impl App {
                             });
                         }
                         KeyCode::Char('e') if *selecting => *reacting = Some(Picker::default()),
+                        KeyCode::Char('?') if *selecting => self.all_keys = !self.all_keys,
                         KeyCode::Char('r') if *selecting => {
                             *composing = Some(Compose::new("", Some(*selected_msg)))
                         }
@@ -1560,6 +1566,7 @@ impl App {
                 KeyCode::PageDown => {
                     *selected = step(&forward_list, *selected, self.list_page as isize)
                 }
+                KeyCode::Char('?') => self.all_keys = !self.all_keys,
                 KeyCode::Enter => {
                     let action = Action::Forward {
                         from: *discussion_idx,
@@ -1609,6 +1616,7 @@ impl App {
                         scroll: self.list_scroll,
                     };
                 }
+                KeyCode::Char('?') => self.all_keys = !self.all_keys,
                 KeyCode::Char('q') => return Some(Action::Quit),
                 _ => {}
             },
@@ -1665,7 +1673,7 @@ impl App {
             copy_to_clipboard(out, &text)?;
         }
         let typing: Vec<usize> = self.typing.iter().map(|t| t.discussion).collect();
-        self.list_page = (h as usize).saturating_sub(FOOTER).max(1);
+        let (width, all) = (w as usize, self.all_keys);
         let actions = self.capabilities.chat_actions;
         let for_good = match &self.deleting_chat {
             Some(chats)
@@ -1747,22 +1755,25 @@ impl App {
             _ => "type to find   Enter results   Esc back".to_string(),
         };
         match &mut self.screen {
-            Screen::List { selected, scroll } => draw_list(
-                out,
-                &self.discussions,
-                &typing,
-                &self.marked,
-                Some((self.name.as_str(), self.version.as_str()))
-                    .filter(|(name, _)| !name.is_empty()),
-                None,
-                self.folder,
-                true,
-                (&list_footer, footer_tone),
-                *selected,
-                scroll,
-                w,
-                h,
-            ),
+            Screen::List { selected, scroll } => {
+                self.list_page = draw_list(
+                    out,
+                    &self.discussions,
+                    &typing,
+                    &self.marked,
+                    Some((self.name.as_str(), self.version.as_str()))
+                        .filter(|(name, _)| !name.is_empty()),
+                    None,
+                    self.folder,
+                    true,
+                    &footer_lines(&list_footer, footer_tone, width, true, all),
+                    *selected,
+                    scroll,
+                    w,
+                    h,
+                )?;
+                Ok(())
+            }
             Screen::Discussion {
                 discussion_idx,
                 selected_msg,
@@ -1797,6 +1808,7 @@ impl App {
                         "for everyone"
                     }),
                     self.status.as_deref(),
+                    all,
                     w,
                     h,
                 )?;
@@ -1806,41 +1818,53 @@ impl App {
             }
             Screen::Forward {
                 selected, scroll, ..
-            } => draw_list(
-                out,
-                &self.discussions,
-                &typing,
-                &[],
-                None,
-                Some("Forward to\u{2026}"),
-                None,
-                false,
-                (
-                    "\u{2191}/\u{2193} select chat   Enter forward   Esc cancel",
-                    ui::Tone::Dim,
-                ),
-                *selected,
-                scroll,
-                w,
-                h,
-            ),
+            } => {
+                self.list_page = draw_list(
+                    out,
+                    &self.discussions,
+                    &typing,
+                    &[],
+                    None,
+                    Some("Forward to\u{2026}"),
+                    None,
+                    false,
+                    &footer_lines(
+                        "\u{2191}/\u{2193} select chat   Enter forward   Esc cancel",
+                        ui::Tone::Dim,
+                        width,
+                        true,
+                        all,
+                    ),
+                    *selected,
+                    scroll,
+                    w,
+                    h,
+                )?;
+                Ok(())
+            }
             Screen::Settings { selected, .. } => draw_settings(
                 out,
                 &mut self.settings,
                 *selected,
                 self.status.as_deref(),
+                all,
                 w,
                 h,
             ),
-            Screen::Find(finding) => draw_find(
-                out,
-                &self.discussions,
-                &self.marked,
-                finding,
-                (&find_footer, footer_tone),
-                w,
-                h,
-            ),
+            Screen::Find(finding) => {
+                // `?` shows all the keys while browsing the results, else it is typed.
+                let more = finding.browsing;
+                self.list_page = draw_find(
+                    out,
+                    &self.discussions,
+                    &self.marked,
+                    finding,
+                    &footer_lines(&find_footer, footer_tone, width, more, all),
+                    w,
+                    h,
+                )?;
+                Ok(())
+            }
             Screen::NewChat(new) => {
                 let help = match &self.status {
                     Some(status) => status.clone(),
@@ -1863,7 +1887,10 @@ impl App {
                 } else {
                     ui::Tone::Dim
                 };
-                draw_new_chat(out, new, (&help, tone), w, h)
+                // `?` is typed: the keys that fit.
+                let footer = footer_lines(&help, tone, width, false, false);
+                self.list_page = draw_new_chat(out, new, &footer, w, h)?;
+                Ok(())
             }
         }
     }
@@ -2036,7 +2063,6 @@ fn print_line(
 }
 
 const HEADER: usize = 2;
-const FOOTER: usize = 1;
 
 /// Indices of the discussions in `folder` (`None`: the inbox) in display order: pinned
 /// first (in pin order), then the others, the last written to first (those without
@@ -2139,6 +2165,168 @@ fn list_badge(discussion: &Discussion) -> String {
     }
 }
 
+/// The last message of a chat in a line, for the second line of the chat in the list:
+/// "You: " in front of ours, the first name of the sender in a group, the kind of
+/// attachment when there is no text.
+fn preview(discussion: &Discussion) -> String {
+    let Some(m) = discussion.messages.last() else {
+        return String::new();
+    };
+    let body = if m.deleted {
+        "This message was deleted".to_string()
+    } else if !m.text.trim().is_empty() {
+        m.text.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        let kind = m
+            .attachments
+            .iter()
+            .map(|a| a.content_type.as_str())
+            .chain(m.remote_attachments.iter().map(String::as_str))
+            .next();
+        match kind {
+            Some(t) if t.starts_with("image/") => "Photo",
+            Some(t) if t.starts_with("video/") => "Video",
+            Some(t) if t.starts_with("audio/") => "Audio",
+            Some(_) => "Attachment",
+            None => "",
+        }
+        .to_string()
+    };
+    let who = if m.from_me {
+        Some("You")
+    } else if discussion.is_group {
+        m.sender_name.split_whitespace().next()
+    } else {
+        None
+    };
+    match who {
+        Some(who) => format!("{who}: {body}"),
+        None => body,
+    }
+}
+
+/// When a message was sent, as the chat list tells it: "14:02" today, "Yesterday",
+/// the day of the week within a week, "Oct 3" this year, "Oct 3, 2025" before.
+fn list_time(at: chrono::NaiveDateTime, now: chrono::NaiveDateTime) -> String {
+    use chrono::Datelike;
+    match (now.date() - at.date()).num_days() {
+        ..=0 => at.format("%H:%M").to_string(),
+        1 => "Yesterday".to_string(),
+        2..=6 => at.format("%a").to_string(),
+        _ if at.year() == now.year() => at.format("%b %-d").to_string(),
+        _ => at.format("%b %-d, %Y").to_string(),
+    }
+}
+
+/// A line of the footer, with its tones.
+type FooterLine = (String, Vec<Toned>);
+
+/// Whether `word`, first in a hint, is a key: a character (not a digit: "3 marked"), a
+/// named key, or keys joined by "/" ("↑/↓", "Space/Enter").
+fn is_key(word: &str) -> bool {
+    let mut chars = word.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => !c.is_ascii_digit(),
+        _ if word.contains('/') => word.split('/').all(is_key),
+        _ => matches!(
+            word,
+            "Enter" | "Space" | "Esc" | "Del" | "Backspace" | "Tab"
+        ),
+    }
+}
+
+/// The footer showing `text`, in `tone`. When it is help (dimmed) made of hints ("key
+/// label", three spaces apart), the keys are in the accent; on one line, the hints that fit
+/// in `width` (the last one kept), with "? more" for the others if `more` (`?` shows them),
+/// or all on as many lines as they take if `all`.
+fn footer_lines(
+    text: &str,
+    tone: ui::Tone,
+    width: usize,
+    more: bool,
+    all: bool,
+) -> Vec<FooterLine> {
+    if tone != ui::Tone::Dim {
+        return vec![(text.to_string(), vec![whole(text, tone)])];
+    }
+    const GAP: &str = "   ";
+    let mut hints: Vec<&str> = text.split(GAP).filter(|h| !h.is_empty()).collect();
+    let fits = |hints: &[&str]| ui::width_of(&hints.join(GAP)) <= width;
+    let all = all && more;
+    if all {
+        hints.push("? less");
+    } else if !fits(&hints) && hints.len() > 1 {
+        // The first hints, then "? more" and the last one ("q quit", "Esc back").
+        let last = hints.pop().expect("more than one");
+        let tail: Vec<&str> = more.then_some("? more").into_iter().chain([last]).collect();
+        while !hints.is_empty() && !fits(&[&hints[..], &tail[..]].concat()) {
+            hints.pop();
+        }
+        hints.extend(tail);
+    }
+    // On lines of `width` when all are shown, else on one.
+    let mut lines: Vec<Vec<&str>> = vec![Vec::new()];
+    for hint in hints {
+        let line = lines.last_mut().expect("one at least");
+        if all && !line.is_empty() && !fits(&[&line[..], &[hint]].concat()) {
+            lines.push(vec![hint]);
+        } else {
+            line.push(hint);
+        }
+    }
+    lines
+        .into_iter()
+        .map(|hints| {
+            let mut text = String::new();
+            let mut tones = Vec::new();
+            for hint in hints {
+                if !text.is_empty() {
+                    text.push_str(GAP);
+                }
+                let start = text.len();
+                text.push_str(hint);
+                let key = hint
+                    .split(' ')
+                    .next()
+                    .filter(|k| is_key(k))
+                    .map_or(0, str::len);
+                tones.push(Toned {
+                    start,
+                    end: start + key,
+                    tone: ui::Tone::Accent,
+                });
+                tones.push(Toned {
+                    start: start + key,
+                    end: text.len(),
+                    tone: ui::Tone::Dim,
+                });
+            }
+            (text, tones)
+        })
+        .collect()
+}
+
+/// Prints the `footer` lines at the bottom of a screen `width` by `height`.
+fn print_footer(
+    out: &mut impl Write,
+    footer: &[FooterLine],
+    width: usize,
+    height: usize,
+) -> io::Result<()> {
+    let top = height.saturating_sub(footer.len());
+    for (row, (text, tones)) in footer.iter().enumerate() {
+        print_line(
+            out,
+            (top + row) as u16,
+            &ui::pad_left(text, width),
+            &[],
+            tones,
+            false,
+        )?;
+    }
+    Ok(())
+}
+
 /// The entry `delta` places away from `selected` among `entries` (clamped).
 fn step(entries: &[usize], selected: usize, delta: isize) -> usize {
     let Some(pos) = entries.iter().position(|&i| i == selected) else {
@@ -2153,7 +2341,10 @@ enum Row<'a> {
     Heading(&'a str, &'a str),
     Title(&'a str),
     Blank,
+    /// The name of a chat, and when it was last written to.
     Chat(usize),
+    /// The last message of a chat, under its name.
+    Preview(usize),
     /// A folder and its number of chats.
     Folder(Folder, usize),
 }
@@ -2183,7 +2374,7 @@ fn list_rows<'a>(
         }
         rows.push(Row::Title(title));
         rows.push(Row::Blank);
-        rows.extend(chats.iter().map(|&i| Row::Chat(i)));
+        rows.extend(chats.iter().flat_map(|&i| [Row::Chat(i), Row::Preview(i)]));
     };
     match (folder, title) {
         (Some(folder), _) => section(&mut rows, folder.name(), &order),
@@ -2220,17 +2411,17 @@ fn draw_list(
     // The folder shown, `None` for the inbox (followed by the folders if `with_folders`).
     folder: Option<Folder>,
     with_folders: bool,
-    // The footer, dimmed unless asking or telling something.
-    help: (&str, ui::Tone),
+    footer: &[FooterLine],
     selected: usize,
     scroll: &mut usize,
     w: u16,
     h: u16,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let width = w as usize;
     let height = h as usize;
-    let viewport = height.saturating_sub(FOOTER).max(1);
+    let viewport = height.saturating_sub(footer.len()).max(1);
     let rows = list_rows(discussions, heading, title, folder, with_folders);
+    let now = chrono::Local::now().naive_local();
 
     // Keep the selected chat in view, with its section title when it is the first one.
     let sel_row = rows
@@ -2241,15 +2432,20 @@ fn draw_list(
             _ => false,
         })
         .unwrap_or(0);
+    // With its preview under it.
+    let sel_end = match rows.get(sel_row + 1) {
+        Some(Row::Preview(_)) => sel_row + 1,
+        _ => sel_row,
+    };
     let mut top = sel_row;
-    while top > 0 && !matches!(rows[top - 1], Row::Chat(_) | Row::Folder(..)) {
+    while top > 0 && !matches!(rows[top - 1], Row::Preview(_) | Row::Folder(..)) {
         top -= 1;
     }
     if top < *scroll {
         *scroll = top;
     }
-    if sel_row >= *scroll + viewport {
-        *scroll = sel_row + 1 - viewport;
+    if sel_end >= *scroll + viewport {
+        *scroll = sel_end + 1 - viewport;
     }
     *scroll = (*scroll).min(rows.len().saturating_sub(viewport));
 
@@ -2294,13 +2490,36 @@ fn draw_list(
                 }
                 // Number of new messages in front, right-aligned in a 4-column prefix: "  ③ ",
                 // "99+ "; after a red "❗" when our last message was not sent: " ❗ ", "❗③ ".
+                // When the last message was sent at the end, a column from the edge.
                 let badge = ui::pad_right(&list_badge(discussion), 3);
-                let text = format!("{badge} {}", ui::pad_left(&title, width.saturating_sub(4)));
-                let mut tones = vec![Toned {
-                    start: 0,
-                    end: badge.len(),
-                    tone: ui::Tone::Accent,
-                }];
+                let time = discussion
+                    .messages
+                    .last()
+                    .map(|m| format!("  {} ", list_time(m.timestamp, now)))
+                    .unwrap_or_default();
+                let room = width.saturating_sub(4 + ui::width_of(&time));
+                let name = ui::pad_left(&title, room);
+                let text = format!("{badge} {name}{time}");
+                let name_start = badge.len() + 1;
+                let time_start = name_start + name.len();
+                // With new messages: the name in bold, the time in the accent, as on the phone.
+                let unread = discussion.unread > 0;
+                let mut tones = vec![
+                    Toned {
+                        start: 0,
+                        end: badge.len(),
+                        tone: ui::Tone::Accent,
+                    },
+                    Toned {
+                        start: time_start,
+                        end: text.len(),
+                        tone: if unread {
+                            ui::Tone::Accent
+                        } else {
+                            ui::Tone::Dim
+                        },
+                    },
+                ];
                 if let Some(at) = badge.find('\u{2757}') {
                     tones.push(Toned {
                         start: at,
@@ -2308,16 +2527,30 @@ fn draw_list(
                         tone: ui::Tone::Alert,
                     });
                 }
-                // With new messages: in bold, as on the phone.
-                let bold: Vec<Styled> = (discussion.unread > 0)
+                let bold: Vec<Styled> = unread
                     .then(|| Styled {
-                        start: badge.len() + 1,
-                        end: text.trim_end().len(),
+                        start: name_start,
+                        end: name_start + name.trim_end().len(),
                         style: data::Style::Bold,
                     })
                     .into_iter()
                     .collect();
                 print_line(out, y as u16, &text, &bold, &tones, idx == selected)?;
+                continue;
+            }
+            Some(Row::Preview(idx)) => {
+                // Dimmed, unless new.
+                let text = format!(
+                    "    {}",
+                    ui::pad_left(&preview(&discussions[*idx]), width.saturating_sub(5))
+                );
+                let text = ui::pad_left(&text, width);
+                let tone = if discussions[*idx].unread > 0 {
+                    ui::Tone::Normal
+                } else {
+                    ui::Tone::Dim
+                };
+                print_toned(out, y as u16, &text, tone, *idx == selected)?;
                 continue;
             }
             Some(Row::Folder(f, n)) => {
@@ -2332,15 +2565,9 @@ fn draw_list(
         };
         print_row(out, y as u16, &text, false)?;
     }
-
-    print_toned(
-        out,
-        height.saturating_sub(1) as u16,
-        &ui::pad_left(help.0, width),
-        help.1,
-        false,
-    )?;
-    Ok(())
+    print_footer(out, footer, width, height)?;
+    // Chats in a page: two rows each.
+    Ok((viewport / 2).max(1))
 }
 
 /// The search: the query, then the chats and the messages found, the selected one in
@@ -2351,15 +2578,14 @@ fn draw_find(
     // Chats marked for the next action.
     marked: &[usize],
     finding: &mut Finding,
-    // The footer, dimmed unless telling something.
-    help: (&str, ui::Tone),
+    footer: &[FooterLine],
     w: u16,
     h: u16,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let width = w as usize;
     let height = h as usize;
     // The query line and a blank one above the results.
-    let viewport = height.saturating_sub(FOOTER + 2).max(1);
+    let viewport = height.saturating_sub(footer.len() + 2).max(1);
     // The results under their section titles: (result index, text, styles).
     let mut rows: Vec<(Option<usize>, String, Vec<Styled>)> = Vec::new();
     let mut section = None;
@@ -2457,14 +2683,8 @@ fn draw_find(
             selected,
         )?;
     }
-    print_toned(
-        out,
-        height.saturating_sub(1) as u16,
-        &ui::pad_left(help.0, width),
-        help.1,
-        false,
-    )?;
-    Ok(())
+    print_footer(out, footer, width, height)?;
+    Ok(viewport)
 }
 
 /// The choice of whom to start a chat with: those picked and the query, then the number
@@ -2472,15 +2692,14 @@ fn draw_find(
 fn draw_new_chat(
     out: &mut impl Write,
     new: &mut Recipients,
-    // The footer, dimmed unless telling something.
-    help: (&str, ui::Tone),
+    footer: &[FooterLine],
     w: u16,
     h: u16,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let width = w as usize;
     let height = h as usize;
     // The recipients line and a blank one above the entries.
-    let viewport = height.saturating_sub(FOOTER + 2).max(1);
+    let viewport = height.saturating_sub(footer.len() + 2).max(1);
     let entries = new.entries();
     if new.selected < new.scroll {
         new.scroll = new.selected;
@@ -2529,14 +2748,8 @@ fn draw_new_chat(
             selected,
         )?;
     }
-    print_toned(
-        out,
-        height.saturating_sub(1) as u16,
-        &ui::pad_left(help.0, width),
-        help.1,
-        false,
-    )?;
-    Ok(())
+    print_footer(out, footer, width, height)?;
+    Ok(viewport)
 }
 
 /// Bold on the first match of `query` in the `len` bytes of `text` from `from`.
@@ -2557,6 +2770,8 @@ fn draw_settings(
     settings: &mut Settings,
     selected: usize,
     status: Option<&str>,
+    // All the keys in the footer.
+    all: bool,
     w: u16,
     h: u16,
 ) -> io::Result<()> {
@@ -2580,17 +2795,13 @@ fn draw_settings(
         )?;
     }
     let help = "\u{2191}/\u{2193} select   Space/Enter toggle   Esc back   q quit";
-    print_toned(
-        out,
-        height.saturating_sub(1) as u16,
-        &ui::pad_left(status.unwrap_or(help), width),
-        if status.is_some() {
-            ui::Tone::Normal
-        } else {
-            ui::Tone::Dim
-        },
-        false,
-    )?;
+    let tone = if status.is_some() {
+        ui::Tone::Normal
+    } else {
+        ui::Tone::Dim
+    };
+    let footer = footer_lines(status.unwrap_or(help), tone, width, true, all);
+    print_footer(out, &footer, width, height)?;
     Ok(())
 }
 
@@ -2676,6 +2887,8 @@ fn draw_discussion(
     // Asking to confirm the deletion of the selected message: for whom.
     deleting: Option<&str>,
     status: Option<&str>,
+    // All the keys in the footer.
+    all: bool,
     w: u16,
     h: u16,
 ) -> io::Result<usize> {
@@ -2687,10 +2900,10 @@ fn draw_discussion(
     let mut cursor_pos = None;
     // Footer row shown reversed: the match under the cursor of the completion.
     let mut highlight = None;
-    // The help is dimmed, unlike the draft or what is asked or told.
-    let mut footer_tone = ui::Tone::Normal;
+    // The help is in hints (see `footer_lines`), unlike the draft or what is asked or told.
+    let mut hints = Vec::new();
     // Footer rows with their styles (only the draft has some).
-    let footer: Vec<(String, Vec<Styled>)> = match composing {
+    let mut footer: Vec<(String, Vec<Styled>)> = match composing {
         Some(
             compose @ Compose {
                 editor, reply_to, ..
@@ -2787,13 +3000,18 @@ fn draw_discussion(
                 } else {
                     "\u{2191} select   Enter new message   Esc back   q quit"
                 };
-                if status.is_none() {
-                    footer_tone = ui::Tone::Dim;
-                }
-                vec![(status.unwrap_or(help).to_string(), Vec::new())]
+                let tone = if status.is_some() {
+                    ui::Tone::Normal
+                } else {
+                    ui::Tone::Dim
+                };
+                // `?` shows them all while a message is selected (else it starts a message).
+                hints = footer_lines(status.unwrap_or(help), tone, width, selecting, all);
+                Vec::new()
             }
         },
     };
+    footer.extend(hints.iter().map(|(text, _)| (text.clone(), Vec::new())));
     let viewport = height.saturating_sub(HEADER + footer.len()).max(1);
 
     let mut lines = ui::build_discussion_lines(discussion, width, new_from, thumbnails);
@@ -2887,12 +3105,13 @@ fn draw_discussion(
     let footer_y = height.saturating_sub(footer.len());
     for (row, (text, styles)) in footer.iter().enumerate() {
         let text = ui::pad_left(text, width);
+        let tones = hints.get(row).map_or(&[][..], |(_, tones)| tones);
         print_line(
             out,
             (footer_y + row) as u16,
             &text,
             styles,
-            &[whole(&text, footer_tone)],
+            tones,
             highlight == Some(row),
         )?;
     }
@@ -3543,13 +3762,115 @@ mod tests {
     }
 
     #[test]
+    fn chats_are_listed_with_the_time_and_the_last_message() {
+        let mut app = app();
+        // Rows of 80 columns (one character each here).
+        let chars: Vec<char> = screen(&mut app).chars().collect();
+        let lines: Vec<String> = chars.chunks(80).map(String::from_iter).collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains("Alice Martin"))
+            .expect("listed");
+        let time = list_time(
+            app.discussions[0].messages.last().unwrap().timestamp,
+            chrono::Local::now().naive_local(),
+        );
+        assert!(lines[at].trim_end().ends_with(&time), "{:?}", lines[at]);
+        let preview = preview(&app.discussions[0]);
+        assert!(!preview.is_empty());
+        assert!(
+            lines[at + 1].starts_with(&format!("    {preview}")),
+            "{:?}",
+            lines[at + 1]
+        );
+    }
+
+    #[test]
+    fn previews_say_who_wrote_and_what_was_sent() {
+        let mut d = Discussion::new("g", "Group");
+        assert_eq!(preview(&d), "");
+        d.is_group = true;
+        let mut m = Message::mine("1", "hello\nthere".to_string(), None, false);
+        d.messages.push(m.clone());
+        assert_eq!(preview(&d), "You: hello there");
+        m.from_me = false;
+        m.sender_name = "Maxime Durand".to_string();
+        m.text = String::new();
+        m.remote_attachments = vec!["image/jpeg".to_string()];
+        d.messages.push(m.clone());
+        assert_eq!(preview(&d), "Maxime: Photo");
+        d.is_group = false;
+        assert_eq!(preview(&d), "Photo");
+    }
+
+    #[test]
+    fn list_times_get_coarser_with_age() {
+        let at = |s: &str| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
+        let now = at("2026-11-04 18:00");
+        assert_eq!(list_time(at("2026-11-04 14:02"), now), "14:02");
+        assert_eq!(list_time(at("2026-11-03 23:59"), now), "Yesterday");
+        assert_eq!(list_time(at("2026-10-30 09:00"), now), "Fri");
+        assert_eq!(list_time(at("2026-10-28 09:00"), now), "Oct 28");
+        assert_eq!(list_time(at("2025-12-31 09:00"), now), "Dec 31, 2025");
+    }
+
+    #[test]
+    fn the_footer_shows_the_keys_that_fit_then_all_with_question_mark() {
+        let help = "\u{2191}/\u{2193} select   Enter open   Space mark   Del delete   q quit";
+        let line = |lines: &[FooterLine]| lines.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            line(&footer_lines(help, ui::Tone::Dim, 80, true, false)),
+            [help],
+            "all fit"
+        );
+        assert_eq!(
+            line(&footer_lines(help, ui::Tone::Dim, 40, true, false)),
+            ["\u{2191}/\u{2193} select   ? more   q quit"]
+        );
+        assert_eq!(
+            line(&footer_lines(help, ui::Tone::Dim, 40, false, false)),
+            ["\u{2191}/\u{2193} select   Enter open   q quit"],
+            "no ? where it is typed"
+        );
+        assert_eq!(
+            line(&footer_lines(help, ui::Tone::Dim, 40, true, true)),
+            [
+                "\u{2191}/\u{2193} select   Enter open   Space mark",
+                "Del delete   q quit   ? less"
+            ]
+        );
+        // The keys in the accent, the rest dimmed.
+        let (text, tones) =
+            &footer_lines("Del delete   3 marked", ui::Tone::Dim, 80, true, false)[0];
+        let toned: Vec<(&str, ui::Tone)> = tones
+            .iter()
+            .filter(|t| t.start < t.end)
+            .map(|t| (&text[t.start..t.end], t.tone))
+            .collect();
+        assert_eq!(
+            toned,
+            [
+                ("Del", ui::Tone::Accent),
+                (" delete", ui::Tone::Dim),
+                ("3 marked", ui::Tone::Dim)
+            ]
+        );
+        // What is asked or told stays as it is.
+        let asked = "Delete \u{201c}A\u{201d}?   y yes   any other key: no";
+        assert_eq!(
+            line(&footer_lines(asked, ui::Tone::Normal, 20, true, false)),
+            [asked]
+        );
+    }
+
+    #[test]
     fn page_keys_jump_a_page_of_chats() {
         let titles: Vec<Discussion> = (0..50)
             .map(|i| Discussion::new(i.to_string(), format!("Chat {i}")))
             .collect();
         let mut app = App::new(titles);
         let mut out = Vec::new();
-        app.draw(&mut out, 80, 11).unwrap(); // 10 rows of list above the help line
+        app.draw(&mut out, 80, 21).unwrap(); // 20 rows of list above the help line: 10 chats
         app.handle_key(key(KeyCode::PageDown));
         app.handle_key(key(KeyCode::PageDown));
         app.handle_key(key(KeyCode::PageUp));
@@ -4089,6 +4410,7 @@ mod tests {
     #[test]
     fn archive_and_delete_chats_from_the_list() {
         let mut app = app();
+        app.handle_key(key(KeyCode::Char('?'))); // all the keys
         assert_eq!(
             app.handle_key(key(KeyCode::Char('a'))),
             None,
@@ -4431,6 +4753,7 @@ mod tests {
         app.capabilities.chat_actions = true;
         app.file_discussion(1, Some(Folder::Trash));
         app.file_discussion(2, Some(Folder::Trash));
+        app.handle_key(key(KeyCode::Char('?'))); // all the keys
         assert_eq!(app.handle_key(key(KeyCode::Char('X'))), None);
         assert!(
             !screen(&mut app).contains("Purge"),

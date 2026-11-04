@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The chat list on two lines per chat, as on the phone: the name and when the chat was last written to ("14:02", "Yesterday", "Fri", "Oct 28"), then its last message, dimmed ("You: …", the sender's first name in groups, "Photo"); both in the accent and plain while there are new messages. A page of the list (PageUp / PageDown) is half as many chats.
+- The help in the footer as keys in the accent and dimmed labels, cut to the width of the terminal: the hints that fit, the last one ("q quit", "Esc back") and "? more"; `?` shows them all, on as many lines as they take (and back). Not where `?` is typed: the new chat, the search being typed, a message.
 - Colours, from the terminal's palette (so its theme's), none with `NO_COLOR`: the selection in blue (reversed), the title of the discussion and the new message counts in blue, chats with new messages in bold, each person's name in a colour of their own (`ui::person_tone`); times, dates, labels and help dimmed. `ui::RenderLine::alert` becomes `tone` (`ui::Tone`).
 - `u` in the chat list marks the selected or marked chats read (told to the backend, `Backend::read`), or unread when all are read already: their last message received is new again, here only (`Action::MarkRead`, `Action::MarkUnread`, `ReadMarks::mark_unread`).
 - `Event::Unread`: a chat marked unread on another device has its last message received new again (not the chat open, nor before that message is shown).
